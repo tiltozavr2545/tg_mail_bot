@@ -1,0 +1,17 @@
+# Секреты — НИКОГДА не коммитим
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Состояние бота (id обработанных писем и т.п.)
+state.json
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

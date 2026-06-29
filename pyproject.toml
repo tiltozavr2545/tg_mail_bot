@@ -1,0 +1,15 @@
+[project]
+name = "tg-mail-bot"
+version = "0.1.0"
+description = "Telegram-бот: читает почту по IMAP и присылает краткие выжимки писем через Gemini 2.5 Flash"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "aiogram>=3.13",
+    "google-genai>=1.2.0",
+    "imap-tools>=1.7.0",
+    "python-dotenv>=1.0.1",
+    "markitdown[docx,pdf,pptx,xls,xlsx]>=0.1.1",
+    # onnxruntime 1.20+ не имеет wheel под macOS 12 x86_64 (тянется через magika в markitdown)
+    "onnxruntime<1.20",
+]
