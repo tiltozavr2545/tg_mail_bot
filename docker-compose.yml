@@ -1,0 +1,8 @@
+# Запуск одной командой:  podman compose up -d --build   (или docker compose ...)
+# .env вшит в образ при сборке (см. Dockerfile), поэтому env_file здесь не нужен.
+services:
+  bot:
+    build: .
+    image: tg_mail_bot
+    container_name: tg_mail_bot
+    restart: unless-stopped

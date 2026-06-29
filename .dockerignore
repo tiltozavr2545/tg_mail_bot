@@ -1,0 +1,12 @@
+# Что НЕ копировать в образ.
+# Заметь: .env здесь НЕТ намеренно — он вшивается в образ (см. Dockerfile).
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+state.json

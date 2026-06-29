@@ -65,6 +65,57 @@ uv run python main.py
 При старте бот проверит подключение к Gmail, пришлёт тебе «✅ Бот запущен»
 и начнёт следить за почтой.
 
+## Запуск в контейнере (Podman / Docker)
+
+Образ самодостаточный: `.env` вшивается в него при сборке, поэтому запускать можно
+без каких-либо флагов окружения.
+
+> ⚠️ Так как секреты внутри образа — **не публикуй этот образ в реестрах и не делись им**.
+> Это вариант для личного локального использования. Сам код в git остаётся чистым:
+> `.env` в `.gitignore` и в образ попадает только при локальной сборке.
+
+**Сборка и запуск (Podman):**
+
+```bash
+# 1. Создай рядом с Dockerfile файл .env и заполни его (см. .env.example)
+cp .env.example .env   # затем впиши свои значения
+
+# 2. Собери образ (Podman читает обычный Dockerfile)
+podman build -t tg_mail_bot .
+
+# 3. Запусти в фоне с авто-перезапуском
+podman run -d --name tg_mail_bot --restart unless-stopped tg_mail_bot
+
+# Логи:        podman logs -f tg_mail_bot
+# Остановить:  podman stop tg_mail_bot
+# Обновить:    podman build -t tg_mail_bot . && podman rm -f tg_mail_bot && podman run -d --name tg_mail_bot --restart unless-stopped tg_mail_bot
+```
+
+Или одной командой через compose:
+
+```bash
+podman compose up -d --build      # docker compose up -d --build — если Docker
+```
+
+### На Windows
+
+1. Установи **Podman Desktop** (<https://podman-desktop.io>) — он сам поднимет Linux-машину
+   (`podman machine init` / `podman machine start`, обычно делается через UI при первом запуске).
+2. Склонируй репозиторий и зайди в папку:
+   ```powershell
+   git clone https://github.com/tiltozavr2545/tg_mail_bot.git
+   cd tg_mail_bot
+   ```
+3. Создай `.env` из `.env.example` и впиши свои значения.
+4. Собери и запусти (команды те же, что выше):
+   ```powershell
+   podman build -t tg_mail_bot .
+   podman run -d --name tg_mail_bot --restart unless-stopped tg_mail_bot
+   ```
+
+При смене любых ключей пересобери образ — `.env` вшит внутрь, поэтому правка `.env`
+подействует только после новой сборки.
+
 ## Команды бота
 
 - `/start` — статус и список команд
