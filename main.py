@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BufferedInputFile,
@@ -57,10 +59,21 @@ def _sender_line(email: Email) -> str:
 
 
 def _render_summary(email: Email, summary: str) -> str:
-    text = f"{html.escape(_sender_line(email))}\n\n{html.escape(summary)}"
+    # summary приходит из Gemini уже как Telegram-HTML (может содержать <b>…</b>),
+    # поэтому его не экранируем; экранируем только строку отправителя.
+    text = f"<b>{html.escape(_sender_line(email))}</b>\n\n{summary}"
     if len(text) > TELEGRAM_LIMIT:
         text = text[: TELEGRAM_LIMIT - 1] + "…"
     return text
+
+
+async def _send_html(bot: Bot, chat_id: int, text: str) -> None:
+    """Отправить с HTML-разметкой; если разметка битая — упасть в обычный текст."""
+    try:
+        await bot.send_message(chat_id, text)
+    except TelegramBadRequest:
+        plain = re.sub(r"<[^>]+>", "", text)
+        await bot.send_message(chat_id, plain, parse_mode=None)
 
 
 def _render_error(email: Email) -> str:
@@ -82,7 +95,7 @@ async def process_new_mail(bot: Bot, cfg: Config, summarizer: Summarizer) -> int
         for email in emails:
             try:
                 summary = await summarizer.summarize(email)
-                await bot.send_message(cfg.telegram_chat_id, _render_summary(email, summary))
+                await _send_html(bot, cfg.telegram_chat_id, _render_summary(email, summary))
                 processed.append(email.uid)
             except Exception:  # noqa: BLE001
                 logger.exception("Не удалось обработать письмо uid=%s", email.uid)
