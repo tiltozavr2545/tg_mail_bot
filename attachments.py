@@ -24,6 +24,14 @@ MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024
 # Большой, чтобы целиком влезали ведомости на всю группу (Gemini 2.5 Flash легко тянет).
 MAX_TEXT_CHARS = 50_000
 
+# Содержимое читаем (и шлём в Gemini) только у таблиц — это ведомости с баллами.
+# Лекции, книги, презентации, прочие документы не читаем: их можно скачать кнопкой /files.
+READABLE_EXTS = {".xlsx", ".xls", ".xlsm", ".csv", ".tsv", ".ods"}
+
+
+def is_readable_attachment(filename: str) -> bool:
+    return os.path.splitext(filename)[1].lower() in READABLE_EXTS
+
 
 @dataclass
 class ConvertedAttachment:

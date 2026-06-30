@@ -14,7 +14,7 @@ from html.parser import HTMLParser
 
 from imap_tools import AND, MailBox, MailMessageFlags
 
-from attachments import ConvertedAttachment, convert_attachment
+from attachments import ConvertedAttachment, convert_attachment, is_readable_attachment
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -101,12 +101,21 @@ def _extract_body(msg) -> str:
 
 
 def _extract_attachments(msg) -> list[ConvertedAttachment]:
-    """Сконвертировать все вложения письма в Markdown."""
+    """Подготовить вложения письма.
+
+    Содержимое читаем (через MarkItDown → Gemini) только у таблиц-ведомостей.
+    Лекции/книги/презентации/прочие документы не конвертируем — только отмечаем факт,
+    что файл приложен (скачать можно кнопкой /files). Встроенные картинки пропускаем.
+    """
     converted: list[ConvertedAttachment] = []
     for att in msg.attachments:
-        converted.append(
-            convert_attachment(att.filename or "", att.payload, att.content_type or "")
-        )
+        if not _is_file_attachment(att):
+            continue  # встроенные картинки из подписи и т.п.
+        if is_readable_attachment(att.filename):
+            converted.append(convert_attachment(att.filename, att.payload, att.content_type or ""))
+        else:
+            # не читаем — только упомянем по имени
+            converted.append(ConvertedAttachment(att.filename, att.content_type or "", ""))
     return converted
 
 
