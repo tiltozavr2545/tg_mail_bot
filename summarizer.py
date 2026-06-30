@@ -75,7 +75,7 @@ class Summarizer:
             config=types.GenerateContentConfig(
                 system_instruction=self._system_instruction,
                 temperature=0.3,
-                max_output_tokens=600,
+                max_output_tokens=1000,
                 # Отключаем «размышления» — для выжимок не нужны, так быстрее и дешевле.
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
