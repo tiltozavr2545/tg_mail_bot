@@ -27,6 +27,12 @@ def _build_prompt(email: Email) -> str:
             parts.append("")
             parts.append(f"=== Вложение «{att.filename}» (содержимое в Markdown) ===")
             parts.append(att.markdown)
+        elif att.filename:
+            parts.append("")
+            parts.append(
+                f"=== Вложение «{att.filename}»: содержимое прочитать не удалось "
+                "(формат не поддержан) ==="
+            )
     return "\n".join(parts)
 
 
@@ -68,6 +74,8 @@ class Summarizer:
         instruction.append(
             "\n— В остальных случаях кратко передай суть: что хотят и нужно ли что-то "
             "сделать."
+            "\n— Если содержимое какого-то вложения прочитать не удалось, всё равно "
+            "упомяни, что приложен файл с таким названием."
             "\n\nНикогда не выдумывай факты, баллы и оценки, которых нет в письме."
         )
         self._system_instruction = "".join(instruction)
