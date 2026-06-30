@@ -12,6 +12,22 @@ from mail_client import Email
 
 logger = logging.getLogger(__name__)
 
+# Если основная модель недоступна (квота 429 / перегрузка 503), пробуем по очереди эти.
+_FALLBACK_MODELS = ["gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"]
+
+
+def _is_transient(exc: Exception) -> bool:
+    """Временная ошибка модели — есть смысл попробовать другую модель."""
+    code = getattr(exc, "code", None)
+    if code in (429, 500, 502, 503, 504):
+        return True
+    text = str(exc).lower()
+    return any(s in text for s in (
+        "resource_exhausted", "quota", "429", "503", "unavailable",
+        "high demand", "timeout", "timed out", "connection",
+        "failed_precondition", "location is not supported",
+    ))
+
 
 def _build_prompt(email: Email) -> str:
     parts = [
@@ -78,20 +94,45 @@ class Summarizer:
         )
         self._system_instruction = "".join(instruction)
 
+    def _models_to_try(self) -> list[str]:
+        models = [self._model]
+        for m in _FALLBACK_MODELS:
+            if m not in models:
+                models.append(m)
+        return models
+
     async def summarize(self, email: Email) -> str:
-        """Вернуть текст выжимки. Кидает исключение при ошибке API."""
-        response = await self._client.aio.models.generate_content(
-            model=self._model,
-            contents=_build_prompt(email),
-            config=types.GenerateContentConfig(
-                system_instruction=self._system_instruction,
-                temperature=0.3,
-                max_output_tokens=1000,
-                # Отключаем «размышления» — для выжимок не нужны, так быстрее и дешевле.
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
+        """Вернуть текст выжимки. Перебирает модели при временных ошибках.
+
+        Если все модели недоступны временно — кидает исключение (письмо повторится позже).
+        """
+        contents = _build_prompt(email)
+        config = types.GenerateContentConfig(
+            system_instruction=self._system_instruction,
+            temperature=0.3,
+            max_output_tokens=1000,
+            # Отключаем «размышления» — для выжимок не нужны, так быстрее и дешевле.
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
-        text = (response.text or "").strip()
-        if not text:
-            raise RuntimeError("Gemini вернул пустой ответ")
-        return text
+        last_exc: Exception | None = None
+        for model in self._models_to_try():
+            try:
+                response = await self._client.aio.models.generate_content(
+                    model=model, contents=contents, config=config,
+                )
+            except Exception as exc:  # noqa: BLE001
+                if _is_transient(exc):
+                    logger.warning(
+                        "Модель %s недоступна (%s), пробую следующую",
+                        model, str(exc)[:70],
+                    )
+                    last_exc = exc
+                    continue
+                raise  # неустранимая ошибка — пробрасываем сразу
+            text = (response.text or "").strip()
+            if text:
+                if model != self._model:
+                    logger.info("Выжимка сделана запасной моделью %s", model)
+                return text
+            last_exc = RuntimeError(f"{model} вернул пустой ответ")
+        raise last_exc or RuntimeError("Ни одна модель не ответила")
