@@ -71,17 +71,10 @@ def _render_error(email: Email) -> str:
     )
 
 
-async def process_new_mail(
-    bot: Bot, cfg: Config, summarizer: Summarizer, ignore_uids: set[str]
-) -> int:
-    """Обработать новые непрочитанные письма (кроме тех, что были на момент запуска).
-
-    Возвращает количество обработанных писем.
-    """
+async def process_new_mail(bot: Bot, cfg: Config, summarizer: Summarizer) -> int:
+    """Обработать все непрочитанные письма. Возвращает их количество."""
     async with _mail_lock:
         emails = await asyncio.to_thread(fetch_unseen, cfg)
-        # Пропускаем письма, которые уже были непрочитанными при старте бота.
-        emails = [e for e in emails if e.uid not in ignore_uids]
         if not emails:
             return 0
 
@@ -104,13 +97,11 @@ async def process_new_mail(
         return len(emails)
 
 
-async def poll_loop(
-    bot: Bot, cfg: Config, summarizer: Summarizer, ignore_uids: set[str]
-) -> None:
+async def poll_loop(bot: Bot, cfg: Config, summarizer: Summarizer) -> None:
     logger.info("Цикл опроса почты запущен (интервал %d сек)", cfg.poll_interval_seconds)
     while True:
         try:
-            await process_new_mail(bot, cfg, summarizer, ignore_uids)
+            await process_new_mail(bot, cfg, summarizer)
         except Exception:  # noqa: BLE001
             logger.exception("Ошибка в цикле опроса почты")
         await asyncio.sleep(cfg.poll_interval_seconds)
@@ -140,12 +131,12 @@ async def cmd_help(message: Message) -> None:
 
 @router.message(Command("check"))
 async def cmd_check(
-    message: Message, bot: Bot, cfg: Config, summarizer: Summarizer, ignore_uids: set[str]
+    message: Message, bot: Bot, cfg: Config, summarizer: Summarizer
 ) -> None:
     await message.answer("🔎 Проверяю почту…")
-    count = await process_new_mail(bot, cfg, summarizer, ignore_uids)
+    count = await process_new_mail(bot, cfg, summarizer)
     if count == 0:
-        await message.answer("📭 Новых писем нет.")
+        await message.answer("📭 Непрочитанных писем нет.")
 
 
 def _truncate_label(name: str, limit: int = 40) -> str:
@@ -204,12 +195,6 @@ async def main() -> None:
         ) from exc
     logger.info("IMAP OK.")
 
-    # Запоминаем письма, которые уже непрочитаны при старте, — их не трогаем,
-    # обрабатываем только то, что придёт после запуска.
-    existing = await asyncio.to_thread(fetch_unseen, cfg)
-    ignore_uids: set[str] = {e.uid for e in existing}
-    logger.info("Игнорирую %d непрочитанных писем, существовавших до запуска", len(ignore_uids))
-
     bot = Bot(
         token=cfg.telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
@@ -222,7 +207,7 @@ async def main() -> None:
     dp.message.filter(F.chat.id == cfg.telegram_chat_id)
     dp.callback_query.filter(F.from_user.id == cfg.telegram_chat_id)
 
-    poll_task = asyncio.create_task(poll_loop(bot, cfg, summarizer, ignore_uids))
+    poll_task = asyncio.create_task(poll_loop(bot, cfg, summarizer))
 
     try:
         await bot.send_message(cfg.telegram_chat_id, "✅ Бот запущен и следит за почтой.")
@@ -234,7 +219,7 @@ async def main() -> None:
 
     logger.info("Запускаю Telegram-бота…")
     try:
-        await dp.start_polling(bot, cfg=cfg, summarizer=summarizer, ignore_uids=ignore_uids)
+        await dp.start_polling(bot, cfg=cfg, summarizer=summarizer)
     finally:
         poll_task.cancel()
         await bot.session.close()
