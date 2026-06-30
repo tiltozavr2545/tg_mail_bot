@@ -18,6 +18,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
+    BotCommand,
     BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
@@ -243,6 +244,17 @@ async def main() -> None:
     # Реагируем только на твой чат — и на сообщения, и на нажатия кнопок.
     dp.message.filter(F.chat.id == cfg.telegram_chat_id)
     dp.callback_query.filter(F.from_user.id == cfg.telegram_chat_id)
+
+    # Меню команд в Telegram (кнопка «Меню» и список по «/»).
+    try:
+        await bot.set_my_commands([
+            BotCommand(command="check", description="Проверить почту сейчас"),
+            BotCommand(command="files", description="Последние файлы с почты"),
+            BotCommand(command="help", description="Помощь"),
+            BotCommand(command="start", description="Статус и список команд"),
+        ])
+    except Exception:  # noqa: BLE001
+        logger.exception("Не удалось задать меню команд")
 
     poll_task = asyncio.create_task(poll_loop(bot, cfg, summarizer))
 
