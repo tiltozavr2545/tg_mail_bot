@@ -84,6 +84,22 @@ def _render_error(email: Email) -> str:
     )
 
 
+def _is_retryable_error(exc: Exception) -> bool:
+    """Временная ошибка — письмо лучше не трогать и повторить на следующем цикле."""
+    code = getattr(exc, "code", None)
+    if code in (429, 500, 502, 503, 504):
+        return True
+    text = str(exc).lower()
+    # лимит квоты, гео-блок, серверные/сетевые сбои — всё это временно
+    if any(s in text for s in (
+        "resource_exhausted", "quota", "rate limit", "429",
+        "failed_precondition", "location is not supported",
+        "503", "unavailable", "timeout", "timed out", "connection",
+    )):
+        return True
+    return False
+
+
 async def process_new_mail(bot: Bot, cfg: Config, summarizer: Summarizer) -> int:
     """Обработать все непрочитанные письма. Возвращает их количество."""
     async with _mail_lock:
@@ -97,7 +113,15 @@ async def process_new_mail(bot: Bot, cfg: Config, summarizer: Summarizer) -> int
                 summary = await summarizer.summarize(email)
                 await _send_html(bot, cfg.telegram_chat_id, _render_summary(email, summary))
                 processed.append(email.uid)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                if _is_retryable_error(exc):
+                    # временная ошибка (квота/гео-блок/сеть) — не помечаем прочитанным,
+                    # письмо останется непрочитанным и обработается на следующем цикле
+                    logger.warning(
+                        "Временная ошибка, повторю позже uid=%s: %s",
+                        email.uid, str(exc)[:160],
+                    )
+                    continue
                 logger.exception("Не удалось обработать письмо uid=%s", email.uid)
                 try:
                     await bot.send_message(cfg.telegram_chat_id, _render_error(email))
