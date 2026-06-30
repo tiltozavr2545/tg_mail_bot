@@ -28,9 +28,18 @@ class Email:
     uid: str
     subject: str
     from_: str
+    from_name: str  # отображаемое имя отправителя (может быть пустым)
     date: str
     body: str
     attachments: list[ConvertedAttachment]
+
+
+@dataclass
+class RecentFile:
+    uid: str
+    idx: int  # индекс вложения внутри письма
+    filename: str
+    size: int
 
 
 class _TextExtractor(HTMLParser):
@@ -113,6 +122,7 @@ def fetch_unseen(cfg: Config) -> list[Email]:
                     uid=msg.uid,
                     subject=msg.subject or "(без темы)",
                     from_=msg.from_ or "(неизвестный отправитель)",
+                    from_name=(msg.from_values.name if msg.from_values else "") or "",
                     date=msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else "",
                     body=_extract_body(msg),
                     attachments=_extract_attachments(msg),
@@ -140,3 +150,57 @@ def check_connection(cfg: Config) -> None:
         cfg.gmail_address, cfg.gmail_app_password, initial_folder="INBOX"
     ):
         pass
+
+
+def _is_file_attachment(att) -> bool:
+    """Настоящее вложение-файл (не встроенная картинка из подписи)."""
+    if not att.filename:
+        return False
+    disp = (att.content_disposition or "").lower()
+    if disp == "inline" and (att.content_type or "").startswith("image/"):
+        return False
+    return True
+
+
+def list_recent_files(cfg: Config, scan_limit: int = 20, max_files: int = 10) -> list[RecentFile]:
+    """Вернуть последние max_files вложений из почты (новые сверху)."""
+    files: list[RecentFile] = []
+    with MailBox(cfg.imap_host).login(
+        cfg.gmail_address, cfg.gmail_app_password, initial_folder="INBOX"
+    ) as mailbox:
+        try:
+            # Gmail-поиск только писем с вложениями — быстрее, чем тянуть все подряд.
+            messages = mailbox.fetch(
+                'X-GM-RAW "has:attachment"',
+                reverse=True, limit=scan_limit, mark_seen=False, bulk=True,
+            )
+        except Exception:  # noqa: BLE001 — если сервер не Gmail, берём просто последние письма
+            messages = mailbox.fetch(reverse=True, limit=scan_limit, mark_seen=False, bulk=True)
+        for msg in messages:
+            for idx, att in enumerate(msg.attachments):
+                if not _is_file_attachment(att):
+                    continue
+                files.append(
+                    RecentFile(
+                        uid=msg.uid,
+                        idx=idx,
+                        filename=att.filename,
+                        size=att.size or len(att.payload or b""),
+                    )
+                )
+                if len(files) >= max_files:
+                    return files
+    return files
+
+
+def fetch_attachment_bytes(cfg: Config, uid: str, idx: int) -> tuple[str, bytes] | None:
+    """Скачать конкретное вложение (по uid письма и индексу). None, если не найдено."""
+    with MailBox(cfg.imap_host).login(
+        cfg.gmail_address, cfg.gmail_app_password, initial_folder="INBOX"
+    ) as mailbox:
+        for msg in mailbox.fetch(AND(uid=uid), mark_seen=False, bulk=True):
+            atts = msg.attachments
+            if 0 <= idx < len(atts):
+                att = atts[idx]
+                return (att.filename or f"file_{idx}", att.payload)
+    return None

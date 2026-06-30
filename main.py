@@ -15,10 +15,23 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from config import Config, load_config
-from mail_client import Email, check_connection, fetch_unseen, mark_seen
+from mail_client import (
+    Email,
+    check_connection,
+    fetch_attachment_bytes,
+    fetch_unseen,
+    list_recent_files,
+    mark_seen,
+)
 from summarizer import Summarizer
 
 logging.basicConfig(
@@ -36,19 +49,15 @@ _mail_lock = asyncio.Lock()
 TELEGRAM_LIMIT = 4096
 
 
+def _sender_line(email: Email) -> str:
+    """Первая строка ответа: почта отправителя и его имя (если есть)."""
+    if email.from_name and email.from_name != email.from_:
+        return f"{email.from_} ({email.from_name})"
+    return email.from_
+
+
 def _render_summary(email: Email, summary: str) -> str:
-    header = (
-        f"📬 <b>Новое письмо</b>\n"
-        f"👤 {html.escape(email.from_)}\n"
-        f"📌 {html.escape(email.subject)}"
-    )
-    if email.date:
-        header += f"\n🕒 {html.escape(email.date)}"
-    if email.attachments:
-        names = ", ".join(html.escape(a.filename) for a in email.attachments if a.filename)
-        if names:
-            header += f"\n📎 {names}"
-    text = f"{header}\n\n{html.escape(summary)}"
+    text = f"{html.escape(_sender_line(email))}\n\n{html.escape(summary)}"
     if len(text) > TELEGRAM_LIMIT:
         text = text[: TELEGRAM_LIMIT - 1] + "…"
     return text
@@ -56,10 +65,9 @@ def _render_summary(email: Email, summary: str) -> str:
 
 def _render_error(email: Email) -> str:
     return (
-        f"⚠️ <b>Пришло письмо, но не удалось сделать выжимку</b>\n"
-        f"👤 {html.escape(email.from_)}\n"
-        f"📌 {html.escape(email.subject)}\n\n"
-        f"Открой письмо в почте вручную."
+        f"{html.escape(_sender_line(email))}\n\n"
+        f"Пришло письмо «{html.escape(email.subject)}», но не получилось сделать выжимку — "
+        f"загляни в почту вручную."
     )
 
 
@@ -115,6 +123,7 @@ async def cmd_start(message: Message, cfg: Config) -> None:
         f"Проверяю ящик каждые {cfg.poll_interval_seconds} сек.\n"
         "Команды:\n"
         "• /check — проверить почту прямо сейчас\n"
+        "• /files — последние файлы с почты\n"
         "• /help — помощь"
     )
 
@@ -124,6 +133,7 @@ async def cmd_help(message: Message) -> None:
     await message.answer(
         "Я автоматически проверяю новые непрочитанные письма и присылаю их выжимки.\n\n"
         "• /check — проверить почту немедленно\n"
+        "• /files — последние файлы с почты (нажми на файл — пришлю его)\n"
         "• /start — статус и список команд"
     )
 
@@ -136,6 +146,49 @@ async def cmd_check(
     count = await process_new_mail(bot, cfg, summarizer, ignore_uids)
     if count == 0:
         await message.answer("📭 Новых писем нет.")
+
+
+def _truncate_label(name: str, limit: int = 40) -> str:
+    return name if len(name) <= limit else name[: limit - 1] + "…"
+
+
+@router.message(Command("files"))
+async def cmd_files(message: Message, cfg: Config) -> None:
+    await message.answer("📂 Ищу последние файлы…")
+    files = await asyncio.to_thread(list_recent_files, cfg)
+    if not files:
+        await message.answer("На почте не нашлось вложений.")
+        return
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_truncate_label(f.filename),
+                    callback_data=f"f:{f.uid}:{f.idx}",
+                )
+            ]
+            for f in files
+        ]
+    )
+    await message.answer("Последние файлы с почты — нажми, чтобы получить:", reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("f:"))
+async def on_file_click(callback: CallbackQuery, bot: Bot, cfg: Config) -> None:
+    await callback.answer("Загружаю файл…")
+    try:
+        _, uid, idx = callback.data.split(":", 2)
+        result = await asyncio.to_thread(fetch_attachment_bytes, cfg, uid, int(idx))
+    except Exception:  # noqa: BLE001
+        logger.exception("Ошибка при получении файла по callback %s", callback.data)
+        result = None
+    if not result:
+        await bot.send_message(cfg.telegram_chat_id, "Не удалось получить этот файл 😕")
+        return
+    filename, payload = result
+    await bot.send_document(
+        cfg.telegram_chat_id, BufferedInputFile(payload, filename=filename)
+    )
 
 
 async def main() -> None:
@@ -165,8 +218,9 @@ async def main() -> None:
 
     dp = Dispatcher()
     dp.include_router(router)
-    # Обрабатываем сообщения только из твоего чата.
+    # Реагируем только на твой чат — и на сообщения, и на нажатия кнопок.
     dp.message.filter(F.chat.id == cfg.telegram_chat_id)
+    dp.callback_query.filter(F.from_user.id == cfg.telegram_chat_id)
 
     poll_task = asyncio.create_task(poll_loop(bot, cfg, summarizer, ignore_uids))
 

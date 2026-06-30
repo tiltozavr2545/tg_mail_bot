@@ -44,6 +44,7 @@ class Config:
     # Персонализация
     owner_name: str  # ФИО владельца — бот выделяет всё, что относится лично к нему
     owner_context: str  # доп. контекст о владельце (необязательно)
+    tracked_people: list[str]  # люди, чьи результаты вытаскивать из таблиц баллов
 
 
 def load_config() -> Config:
@@ -71,4 +72,7 @@ def load_config() -> Config:
         summary_language=os.getenv("SUMMARY_LANGUAGE", "русском").strip(),
         owner_name=os.getenv("OWNER_NAME", "").strip(),
         owner_context=os.getenv("OWNER_CONTEXT", "").strip(),
+        tracked_people=[
+            p.strip() for p in os.getenv("TRACKED_PEOPLE", "").split(",") if p.strip()
+        ],
     )
